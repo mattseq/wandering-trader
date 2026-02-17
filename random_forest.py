@@ -28,12 +28,16 @@ data['ret_1'] = close.pct_change(1)
 data['ret_5'] = close.pct_change(5)
 data['ret_10'] = close.pct_change(10)
 data['ret_20'] = close.pct_change(20)
+data['ret_30'] = close.pct_change(30)
 data['ma_10'] = close.rolling(10).mean()
 data['ma_20'] = close.rolling(20).mean()
+data['ma_30'] = close.rolling(30).mean()
 data['ma_diff_10'] = close - data['ma_10']
 data['ma_diff_20'] = close - data['ma_20']
+data['ma_diff_30'] = close - data['ma_30']
 data['vol_10'] = data['ret_5'].rolling(10).std()
 data['vol_20'] = data['ret_10'].rolling(20).std()
+data['vol_30'] = data['ret_20'].rolling(30).std()
 data['weekly_return'] = close.pct_change(5).shift(-5)
 data['daily_return'] = close.pct_change(1).shift(-1)
 
@@ -47,7 +51,7 @@ data.dropna(inplace=True)
 print(data.head())
 
 # inputs and labels
-features = ['ret_1', 'ret_5', 'ret_10', 'ret_20', 'ma_10', 'ma_20', 'ma_diff_10', 'ma_diff_20', 'vol_10', 'vol_20']
+features = ['ret_1', 'ret_5', 'ret_10', 'ret_20', 'ret_30', 'ma_10', 'ma_20', 'ma_30', 'ma_diff_10', 'ma_diff_20', 'ma_diff_30', 'vol_10', 'vol_20', 'vol_30']
 X = data[features].values
 y = data['target'].values.reshape(-1, 1)
 
@@ -90,7 +94,7 @@ test_indices = np.array(test_indices)
 print("Accuracy:", accuracy_score(actuals, predictions))
 print(classification_report(actuals, predictions))
 
-cumulative_model_returns = np.cumprod(1 + model_returns)
+cumulative_model_returns = np.cumprod(1 + model_returns) - 1
 returns = data['weekly_return'].values[test_indices]
 buy_and_hold_returns = np.cumprod(1 + returns) - 1
 
