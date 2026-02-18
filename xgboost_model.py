@@ -1,6 +1,5 @@
 import yfinance as yf
-from sklearn.preprocessing import StandardScaler
-from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import accuracy_score, classification_report
 import pandas as pd
@@ -11,7 +10,7 @@ print(pd.__version__)
 
 ticker = "IBM"
 
-data = yf.download(ticker, start="2010-01-01", end="2025-01-01")
+data = yf.download(ticker, start="2005-01-01", end="2025-01-01")
 print(data.head())
 
 close = data['Close'].squeeze()
@@ -81,12 +80,12 @@ for end in range(train_window, len(X) - train_window - test_window, test_window)
         continue
     
     # retrain the model on the new training data
-    model = RandomForestClassifier(
-        n_estimators=500,
-        max_depth=4,
-        min_samples_leaf=20,
-        max_features="sqrt",
-        random_state=42
+    model = XGBClassifier(
+        n_estimators=100,
+        learning_rate=0.15,
+        max_depth=5,
+        random_state=42,
+        eval_metric='logloss'
     )
 
     model.fit(X_train, y_train.ravel())
@@ -94,8 +93,6 @@ for end in range(train_window, len(X) - train_window - test_window, test_window)
     pred = model.predict(X_test)
     predictions.append(pred[0])
     actuals.append(y_test[0][0])
-
-    print(f"Difference: {pred[0] - y_test[0][0]}, Confidence: {model.predict_proba(X_test)[0][1]:.4f}, Predicted: {pred[0]}, Actual: {y_test[0][0]}")
 
     model_returns.append(data['weekly_return'].values[end] if pred[0] == 1 else 0)
     buy_and_hold_returns.append(data['weekly_return'].values[end])
@@ -139,23 +136,14 @@ print("Model Sharpe:", model_sharpe)
 buy_and_hold_sharpe = (np.mean(buy_and_hold_returns) / np.std(buy_and_hold_returns)) * np.sqrt(52)
 print("B&H Sharpe:", buy_and_hold_sharpe)
 
-plt.subplot(2, 1, 1)
+
+plt.figure(figsize=(12, 6))
 plt.plot(test_indices, cumulative_model_returns, label='Model Returns')
 plt.plot(test_indices, cumulative_buy_and_hold_returns, label='Buy and Hold Returns')
 plt.xlabel('Time')
 plt.ylabel('Cumulative Returns')
 plt.title('Model vs Buy and Hold Returns on ' + ticker)
 plt.legend()
-
-plt.subplot(2, 1, 2)
-plt.plot(test_indices, model_returns, label='Model Weekly Returns')
-plt.plot(test_indices, buy_and_hold_returns, label='Buy and Hold Weekly Returns')
-plt.xlabel('Time')
-plt.ylabel('Weekly Returns')
-plt.title('Model vs Buy and Hold Weekly Returns on ' + ticker)
-plt.legend()
-
-plt.tight_layout()
 plt.show()
 
 ### Look into random forest, gradient boosting, lstm, transformer models.
@@ -175,5 +163,8 @@ plt.show()
 # 4. Switch to a regression random forest that predicts either probability of a positive return or the expected return itself and allocate capital based off of that
 # 5. Include cross-asset signals like VIX for volatility, etc.
 
-### investigate weekly return differences between model and buy and hold when the model is correct vs wrong to see if the model is adding value in terms of risk-adjusted returns, not just accuracy.
-# weekly returns look more stable for model? cant really tell, might not be. maybe record missed opportunities (weeks where model predicted 0 but buy and hold had a positive return) and bad investments (weeks where model predicted 1 but buy and hold had a negative return) and compare
+
+### THE PROBLEM:
+# the first 30 wont be trained on bc features make them nan
+# however, the last 5 in the training set point to the future bc they're weekly return correlates to the next 5 days returns
+# solution: drop the last 5 in the training set
