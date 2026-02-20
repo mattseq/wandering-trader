@@ -9,9 +9,12 @@ import matplotlib.pyplot as plt
 
 print(pd.__version__)
 
-ticker = "IBM"
+ticker = "BA"
 
-data = yf.download(ticker, start="2010-01-01", end="2025-01-01")
+data = yf.download(ticker, start="2015-01-01", end="2025-01-01")
+vix = yf.download("^VIX", start="2015-01-01", end="2025-01-01")
+vix = vix.reindex(data.index).fillna(method='ffill')
+
 print(data.head())
 
 close = data['Close'].squeeze()
@@ -25,15 +28,23 @@ data['ret_5'] = close.pct_change(5)
 data['ret_10'] = close.pct_change(10)
 data['ret_20'] = close.pct_change(20)
 data['ret_30'] = close.pct_change(30)
+
 data['ma_10'] = close.rolling(10).mean()
 data['ma_20'] = close.rolling(20).mean()
 data['ma_30'] = close.rolling(30).mean()
 data['ma_diff_10'] = close - data['ma_10']
 data['ma_diff_20'] = close - data['ma_20']
 data['ma_diff_30'] = close - data['ma_30']
+
 data['vol_10'] = data['ret_5'].rolling(10).std()
 data['vol_20'] = data['ret_10'].rolling(20).std()
 data['vol_30'] = data['ret_20'].rolling(30).std()
+
+data['vix_close'] = vix['Close'].values
+data['vix_ret_1'] = data['vix_close'].pct_change(1)
+data['vix_ret_5'] = data['vix_close'].pct_change(5)
+data['vix_ret_10'] = data['vix_close'].pct_change(10)
+
 data['weekly_return'] = close.pct_change(5).shift(-5)
 data['daily_return'] = close.pct_change(1).shift(-1)
 
@@ -43,12 +54,12 @@ data['target'] = (data['weekly_return'] > 0).astype(int)
 print(data.head())
 
 # inputs and labels
-features = ['ret_1', 'ret_5', 'ret_10', 'ret_20', 'ret_30', 'ma_10', 'ma_20', 'ma_30', 'ma_diff_10', 'ma_diff_20', 'ma_diff_30', 'vol_10', 'vol_20', 'vol_30']
+features = ['ret_1', 'ret_5', 'ret_10', 'ret_20', 'ret_30', 'ma_10', 'ma_20', 'ma_30', 'ma_diff_10', 'ma_diff_20', 'ma_diff_30', 'vol_10', 'vol_20', 'vol_30', 'vix_close', 'vix_ret_1', 'vix_ret_5', 'vix_ret_10']
 X = data[features].values
 y = data['target'].values.reshape(-1, 1)
 
 # train window, model always trains on the last year of data and tests/evals on the next week of data, then rolls forward by a week and repeats the process
-train_window = 252
+train_window = 500
 # test window is 5 days (1 week) bc using weekly returns as target
 test_window = 5
 
@@ -58,7 +69,7 @@ model_returns = []
 buy_and_hold_returns = []
 test_indices = []
 
-for end in range(train_window, len(X) - train_window - test_window, test_window):
+for end in range(train_window, len(X) - test_window, test_window):
     # end = start + train_window
 
     # create training windows and test windows
@@ -71,10 +82,18 @@ for end in range(train_window, len(X) - train_window - test_window, test_window)
     mask_train = ~np.isnan(X_train_window).any(axis=1) & ~np.isnan(y_train_window).any(axis=1)
     X_train = X_train_window[mask_train]
     y_train = y_train_window[mask_train]
+    if (~mask_train).any():
+        dropped_indices = np.where(~mask_train)[0]
+        # expect first 49 rows to be dropped due to 30-day rolling features, but if there are any NaNs after that, print a warning
+        if np.any(dropped_indices > 49):
+            print(f"NaN in training set after index 49 for window ending at {end}: {dropped_indices[dropped_indices > 49]}")
+
 
     mask_test = ~np.isnan(X_test_window).any(axis=1) & ~np.isnan(y_test_window).any(axis=1)
     X_test = X_test_window[mask_test]
     y_test = y_test_window[mask_test]
+    if (~mask_test).any():
+        print(f"Dropping {len(X_test_window) - np.sum(mask_test)} rows with NaNs from test data for window ending at index {end}")
 
     if len(X_train) == 0 or len(X_test) == 0:
         print("No valid test data for window ending at index", end)
@@ -95,7 +114,7 @@ for end in range(train_window, len(X) - train_window - test_window, test_window)
     predictions.append(pred[0])
     actuals.append(y_test[0][0])
 
-    print(f"Difference: {pred[0] - y_test[0][0]}, Confidence: {model.predict_proba(X_test)[0][1]:.4f}, Predicted: {pred[0]}, Actual: {y_test[0][0]}")
+    # print(f"Difference: {pred[0] - y_test[0][0]}, Confidence: {model.predict_proba(X_test)[0][1]:.4f}, Predicted: {pred[0]}, Actual: {y_test[0][0]}")
 
     model_returns.append(data['weekly_return'].values[end] if pred[0] == 1 else 0)
     buy_and_hold_returns.append(data['weekly_return'].values[end])
@@ -139,6 +158,13 @@ print("Model Sharpe:", model_sharpe)
 buy_and_hold_sharpe = (np.mean(buy_and_hold_returns) / np.std(buy_and_hold_returns)) * np.sqrt(52)
 print("B&H Sharpe:", buy_and_hold_sharpe)
 
+accuracies = predictions == actuals
+correct_model_returns = model_returns[accuracies]
+correct_buy_and_hold_returns = buy_and_hold_returns[accuracies]
+incorrect_model_returns = model_returns[~accuracies]
+incorrect_buy_and_hold_returns = buy_and_hold_returns[~accuracies]
+
+plt.figure()
 plt.subplot(2, 1, 1)
 plt.plot(test_indices, cumulative_model_returns, label='Model Returns')
 plt.plot(test_indices, cumulative_buy_and_hold_returns, label='Buy and Hold Returns')
@@ -147,9 +173,32 @@ plt.ylabel('Cumulative Returns')
 plt.title('Model vs Buy and Hold Returns on ' + ticker)
 plt.legend()
 
+# plot actual stock prices with green dots for correct predictions and red dots for incorrect predictions
 plt.subplot(2, 1, 2)
-plt.plot(test_indices, model_returns, label='Model Weekly Returns')
-plt.plot(test_indices, buy_and_hold_returns, label='Buy and Hold Weekly Returns')
+plt.plot(data.index, data['Close'], label='Stock Price')
+correct_indices = test_indices[accuracies]
+incorrect_indices = test_indices[~accuracies]
+plt.scatter(data.index[correct_indices], data['Close'].values[correct_indices], color='green', label='Correct Predictions', marker='o')
+plt.scatter(data.index[incorrect_indices], data['Close'].values[incorrect_indices], color='red', label='Incorrect Predictions', marker='x')
+plt.xlabel('Time')
+plt.ylabel('Stock Price')
+plt.title('Stock Price with Correct/Incorrect Predictions')
+plt.legend()
+
+plt.tight_layout()
+
+plt.figure()
+plt.subplot(2, 1, 1)
+plt.hist(correct_model_returns, bins=20, alpha=0.5, label='Model Returns (Correct Predictions)')
+plt.hist(incorrect_model_returns, bins=20, alpha=0.5, label='Model Returns (Incorrect Predictions)')
+plt.xlabel('Weekly Return')
+plt.ylabel('Frequency')
+plt.title('Returns When Model is Correct/Incorrect')
+plt.legend()
+
+plt.subplot(2, 1, 2)
+plt.plot(test_indices, model_returns, label='Model Weekly Returns', linestyle='--', alpha=0.7)
+plt.plot(test_indices, buy_and_hold_returns, label='Buy and Hold Weekly Returns', linestyle='--', alpha=0.7)
 plt.xlabel('Time')
 plt.ylabel('Weekly Returns')
 plt.title('Model vs Buy and Hold Weekly Returns on ' + ticker)
