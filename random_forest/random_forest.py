@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 
 print(pd.__version__)
 
-ticker = "BA"
+ticker = "IBM"
 
 data = yf.download(ticker, start="2015-01-01", end="2025-01-01")
 vix = yf.download("^VIX", start="2015-01-01", end="2025-01-01")
@@ -98,6 +98,13 @@ for end in range(train_window, len(X) - test_window, test_window):
     if len(X_train) == 0 or len(X_test) == 0:
         print("No valid test data for window ending at index", end)
         continue
+
+    n_train = len(X_train)
+
+    decay = 0.05
+    weights = np.exp(np.linspace(-decay * n_train, 0, n_train))
+
+    weights = weights / np.sum(weights)
     
     # retrain the model on the new training data
     model = RandomForestClassifier(
@@ -108,7 +115,7 @@ for end in range(train_window, len(X) - test_window, test_window):
         random_state=42
     )
 
-    model.fit(X_train, y_train.ravel())
+    model.fit(X_train, y_train.ravel(), sample_weight=weights)
 
     pred = model.predict(X_test)
     predictions.append(pred[0])
