@@ -4,15 +4,14 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import pandas as pd
 import yfinance as yf
-from torch.utils.data import DataLoader, TensorDataset
-from sklearn.preprocessing import StandardScaler, MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 ticker = "BA"
 
-data = yf.download(ticker, start="2015-01-01", end="2025-01-01")
+data = yf.download(ticker, start="2005-01-01", end="2025-01-01")
 
 if (data.empty):
     print("No data found for ticker:", ticker)
@@ -23,7 +22,7 @@ print(data.head())
 data.dropna(inplace=True)
 data.reset_index(inplace=True, drop=True)
 
-split_idx = int(0.8 * len(data))
+split_idx = int(0.6 * len(data))
 train_data = data[:split_idx]
 test_data = data[split_idx:]
 
@@ -31,7 +30,7 @@ test_data = data[split_idx:]
 sequence_length = 60
 
 # features to use for prediction, output is next day's close price
-features = ['Close', 'Volume', 'High', 'Low']
+features = ['Close']
 
 # standardize features, fit scaler only on training data to avoid data leakage
 x_scaler = MinMaxScaler()
@@ -66,7 +65,7 @@ y_train = torch.tensor(y_train, dtype=torch.float32).to(device)
 y_test = torch.tensor(y_test, dtype=torch.float32).to(device)
 
 class LSTMModel(nn.Module):
-    def __init__(self, input_size):
+    def __init__(self, input_size, num_targets=1):
         super(LSTMModel, self).__init__()
         self.lstm1 = nn.LSTM(input_size=input_size, hidden_size=50, num_layers=1, batch_first=True)
         self.lstm2 = nn.LSTM(input_size=50, hidden_size=50, num_layers=1, batch_first=True)
@@ -76,7 +75,7 @@ class LSTMModel(nn.Module):
         self.dropout2 = nn.Dropout(0.2)
         # self.dropout3 = nn.Dropout(0.2)
 
-        self.linear = nn.Linear(50, 1)
+        self.linear = nn.Linear(50, num_targets)
     def forward(self, x):
         # _ is the hidden state, not needed for prediction so just ignore it
         out, _ = self.lstm1(x)
@@ -174,7 +173,7 @@ plt.show()
 actual_returns = np.diff(y_test_inv.squeeze()) / y_test_inv.squeeze()[:-1]
 actual_cum_returns = np.cumprod(1 + actual_returns) - 1
 
-# model strategy: buy if model predicts next close > current close
+# generate trading signals based on model predictions
 predicted_next = test_outputs_inv.squeeze()[1:]
 current = test_outputs_inv.squeeze()[:-1]
 signal = predicted_next > current
@@ -183,8 +182,55 @@ signal = predicted_next > current
 model_returns = actual_returns * signal
 model_cum_returns = np.cumprod(1 + model_returns) - 1
 
+# smart model strategy: adjust signal based on how much the model is predicting the price will increase. Only buy if predicted next close is at least 0.1% higher than current close
+threshold = 0.001
+smart_signal = predicted_next > (current * (1 + threshold))
+smart_model_returns = actual_returns * smart_signal
+smart_model_cum_returns = np.cumprod(1 + smart_model_returns) - 1
+
+# naive momentum strategy: buy if previous day's return > 0
+naive_signal = np.roll(actual_returns > 0, 1)
+naive_signal[0] = False
+naive_returns = actual_returns * naive_signal
+naive_cum_returns = np.cumprod(1 + naive_returns) - 1
+
 plt.plot(actual_cum_returns, label='Buy and Hold (Actual)')
 plt.plot(model_cum_returns, label='Model Strategy')
+plt.plot(naive_cum_returns, label='Naive Momentum Strategy')
+plt.plot(smart_model_cum_returns, label='Smart Model Strategy')
 plt.legend()
-plt.title("Cumulative Returns: Buy and Hold vs Model Strategy")
+plt.title("Cumulative Returns: Strategies vs Buy and Hold on " + ticker)
+plt.show()
+
+# Difference between predicted and previous day's actual close
+pred_diff = predicted_next - current
+plt.plot(pred_diff, label='Prediction - Previous Close')
+plt.title("Difference Between Prediction and Previous Day's Close")
+plt.legend()
+plt.show()
+
+# Recursive forecast for the test set
+recursive_preds = []
+seq = X_test[0].cpu().numpy()
+
+for i in range(len(X_test)):
+    # Predict next close
+    seq_tensor = torch.tensor(seq.reshape(1, sequence_length, len(features)), dtype=torch.float32).to(device)
+    with torch.no_grad():
+        pred = model(seq_tensor).cpu().numpy()
+    pred_inv = y_scaler.inverse_transform(pred)[0, 0]
+    recursive_preds.append(pred_inv)
+    
+    # Prepare next sequence: drop oldest, add new prediction as 'Close'
+    if i < len(X_test) - 1:
+        next_seq = seq[1:].copy()
+        next_row = np.zeros(len(features))
+        next_row[features.index('Close')] = x_scaler.transform([[pred_inv]])[0][0]
+        seq = np.vstack([next_seq, next_row])
+
+# Plot recursive predictions vs actual
+plt.plot(y_test_inv.squeeze(), label='Actual')
+plt.plot(recursive_preds, label='Recursive Predictions')
+plt.legend()
+plt.title("Recursive Forecast vs Actual")
 plt.show()
