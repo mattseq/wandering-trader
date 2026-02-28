@@ -102,8 +102,36 @@ for epoch in range(epochs):
     if (epoch+1) % 10 == 0:
         print(f'Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}')
 
+        with torch.no_grad():
+            preds = model(X_test)
+            predicted = (preds > 0.5).float()
+            accuracy = (predicted == y_test).float().mean()
+            print(f'Accuracy: {accuracy.item():.4f}')
+
 with torch.no_grad():
     preds = model(X_test)
     predicted = (preds > 0.5).float()
     accuracy = (predicted == y_test).float().mean()
     print(f'Accuracy: {accuracy.item():.4f}')
+    
+    # std
+    print(f'Std of predictions: {preds.std().item():.4f}')
+    print(f'Std of actuals: {y_test.std().item():.4f}')
+
+    weekly_returns = torch.tensor(data['weekly_return'].values[train_size:], dtype=torch.float32).to(device)
+
+    strategy_returns = weekly_returns * predicted.squeeze()
+
+    strategy_cum_returns = torch.cumprod(1 + strategy_returns, dim=0) - 1
+    buy_hold_cum_returns = torch.cumprod(1 + weekly_returns, dim=0) - 1
+
+    strategy_cum_returns = strategy_cum_returns.cpu().numpy()
+    buy_hold_cum_returns = buy_hold_cum_returns.cpu().numpy()
+
+    plt.plot(buy_hold_cum_returns, label='Buy and Hold')
+    plt.plot(strategy_cum_returns, label='Model Strategy')
+    plt.xlabel('Weeks')
+    plt.ylabel('Cumulative Return')
+    plt.legend()
+    plt.title('Cumulative Return: Model vs Buy and Hold')
+    plt.show()

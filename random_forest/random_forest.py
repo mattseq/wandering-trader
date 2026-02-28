@@ -40,6 +40,11 @@ data['vol_10'] = data['ret_5'].rolling(10).std()
 data['vol_20'] = data['ret_10'].rolling(20).std()
 data['vol_30'] = data['ret_20'].rolling(30).std()
 
+data['volume_10'] = data['Volume'].rolling(10).mean()
+data['volume_10'] = data['Volume'].rolling(10).mean()
+data['volume_10'] = data['Volume'].rolling(20).mean()
+data['volume_10'] = data['Volume'].rolling(30).mean()
+
 data['vix_close'] = vix['Close'].values
 data['vix_ret_1'] = data['vix_close'].pct_change(1)
 data['vix_ret_5'] = data['vix_close'].pct_change(5)
@@ -108,9 +113,10 @@ for end in range(train_window, len(X) - test_window, test_window):
     
     # retrain the model on the new training data
     model = RandomForestClassifier(
-        n_estimators=500,
-        max_depth=4,
-        min_samples_leaf=20,
+        n_estimators=200,
+        max_depth=15,
+        min_samples_split=5,
+        min_samples_leaf=2,
         max_features="sqrt",
         random_state=42
     )
@@ -212,6 +218,23 @@ plt.title('Model vs Buy and Hold Weekly Returns on ' + ticker)
 plt.legend()
 
 plt.tight_layout()
+plt.show()
+
+
+window = 252
+model_returns_series = pd.Series(model_returns)
+buy_and_hold_returns_series = pd.Series(buy_and_hold_returns)
+
+rolling_model = model_returns_series.rolling(window).mean()
+rolling_bh = buy_and_hold_returns_series.rolling(window).mean()
+
+plt.figure()
+plt.plot(rolling_model, label='Model Rolling Mean Return')
+plt.plot(rolling_bh, label='Buy & Hold Rolling Mean Return')
+plt.xlabel('Weeks')
+plt.ylabel(f'Rolling Mean Return ({window} weeks)')
+plt.title('Rolling Mean of Weekly Returns')
+plt.legend()
 plt.show()
 
 ### Look into random forest, gradient boosting, lstm, transformer models.

@@ -4,20 +4,62 @@ import torch.nn as nn
 import matplotlib.pyplot as plt
 import pandas as pd
 import yfinance as yf
-from sklearn.preprocessing import MinMaxScaler
+from sklearn.preprocessing import MinMaxScaler, StandardScaler
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
-ticker = "BA"
+ticker = "IBM"
 
 data = yf.download(ticker, start="2005-01-01", end="2025-01-01")
+vix = yf.download("^VIX", start="2005-01-01", end="2025-01-01")
+vix = vix.reindex(data.index).fillna(method='ffill')
 
 if (data.empty):
     print("No data found for ticker:", ticker)
     exit(0)
 
 print(data.head())
+
+data['MA5'] = data['Close'].rolling(5).mean()
+data['MA10'] = data['Close'].rolling(10).mean()
+data['Return_1'] = data['Close'].pct_change()
+data['Return_5'] = data['Close'].pct_change(5)
+data['Return_10'] = data['Close'].pct_change(10)
+data['HL_range'] = data['High'] - data['Low']
+data['OC_diff'] = data['Open'] - data['Close']
+data['Volatility'] = data['Return_1'].rolling(10).std()
+data['Volume_Change'] = data['Volume'].pct_change()
+
+delta = data['Close'].diff()
+gain = (delta.where(delta > 0, 0)).rolling(14).mean()
+loss = (-delta.where(delta < 0, 0)).rolling(14).mean()
+rs = gain / loss
+data['RSI'] = 100 - (100 / (1 + rs))
+
+ema12 = data['Close'].ewm(span=12, adjust=False).mean()
+ema26 = data['Close'].ewm(span=26, adjust=False).mean()
+data['MACD'] = ema12 - ema26
+data['MACD_signal'] = data['MACD'].ewm(span=9, adjust=False).mean()
+
+ma20 = data['Close'].rolling(20).mean()
+std20 = data['Close'].rolling(20).std()
+data['BB_upper'] = ma20 + 2 * std20
+data['BB_lower'] = ma20 - 2 * std20
+
+high_low = data['High'] - data['Low']
+high_close = np.abs(data['High'] - data['Close'].shift())
+low_close = np.abs(data['Low'] - data['Close'].shift())
+tr = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+data['ATR'] = tr.rolling(14).mean()
+
+data['VIX_Close'] = vix['Close'].values
+data['VIX_Return_1'] = data['VIX_Close'].pct_change()
+data['VIX_Return_5'] = data['VIX_Close'].pct_change(5)
+data['VIX_Return_10'] = data['VIX_Close'].pct_change(10)
+
+
+data['Target'] = data['Close'].shift(-1)
 
 data.dropna(inplace=True)
 data.reset_index(inplace=True, drop=True)
@@ -30,13 +72,14 @@ test_data = data[split_idx:]
 sequence_length = 60
 
 # features to use for prediction, output is next day's close price
-features = ['Close']
+features = ['Close', 'High', 'Low', 'Volume', 'MA5', 'MA10', 'Return_1', 'Return_5', 'Return_10', 'HL_range', 'OC_diff', 'Volatility', 'Volume_Change', 'RSI', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', 'ATR', 'VIX_Close', 'VIX_Return_1', 'VIX_Return_5', 'VIX_Return_10']
+# features = ['Close']
 
 # standardize features, fit scaler only on training data to avoid data leakage
 x_scaler = MinMaxScaler()
 x_scaler.fit(train_data[features])
 y_scaler = MinMaxScaler()
-y_scaler.fit(train_data['Close'].values.reshape(-1, 1))
+y_scaler.fit(train_data['Target'].values.reshape(-1, 1))
 
 # prep sequences for LSTM
 def create_sequences(X, y, sequence_length):
@@ -44,12 +87,12 @@ def create_sequences(X, y, sequence_length):
     y_seq = []
     for i in range(len(X) - sequence_length):
         X_seq.append(X[i:i+sequence_length])
-        y_seq.append(y[i+sequence_length])
+        y_seq.append(y[i+sequence_length-1])
     return np.array(X_seq), np.array(y_seq).reshape(-1, 1)
 
 # create sequences for training and testing data
-X_train, y_train = create_sequences(train_data[features].values, train_data['Close'].values, sequence_length)
-X_test, y_test = create_sequences(test_data[features].values, test_data['Close'].values, sequence_length)
+X_train, y_train = create_sequences(train_data[features].values, train_data['Target'].values, sequence_length)
+X_test, y_test = create_sequences(test_data[features].values, test_data['Target'].values, sequence_length)
 
 # standardize features using the scaler fit on training data
 X_train = x_scaler.transform(X_train.reshape(-1, len(features))).reshape(X_train.shape)
@@ -94,18 +137,54 @@ class LSTMModel(nn.Module):
 
         return out
     
+# I AM GRUT
+class GRUModel(nn.Module):
+    def __init__(self, input_size, num_targets=1):
+        super(GRUModel, self).__init__()
+        
+        self.gru1 = nn.GRU(input_size=input_size, hidden_size=50, num_layers=1, batch_first=True)
+        self.gru2 = nn.GRU(input_size=50, hidden_size=50, num_layers=1, batch_first=True)
+        self.gru3 = nn.GRU(input_size=50, hidden_size=50, num_layers=1, batch_first=True)
+
+        self.dropout1 = nn.Dropout(0.2)
+        self.dropout2 = nn.Dropout(0.2)
+        # self.dropout3 = nn.Dropout(0.2)
+
+        self.linear = nn.Linear(50, num_targets)
+    def forward(self, x):
+        # _ is the hidden state, not needed for prediction so just ignore it
+        out, _ = self.gru1(x)
+        out = self.dropout1(out)
+
+        out, _ = self.gru2(out)
+        out = self.dropout2(out)
+
+        out, _ = self.gru3(out)
+        # out = self.dropout3(out)
+
+        # lstm outputs sequence of preds with length seq_len, so just get the last output
+        out = out[:, -1, :]
+
+        out = self.linear(out)
+
+        return out
+    
+def quantile_loss(y_pred, y_true, quantile=0.7):
+    error = y_true - y_pred
+    return torch.mean(torch.max(quantile * error, (quantile - 1) * error))
+
 model = LSTMModel(input_size=len(features))
 
-criterion = nn.MSELoss()
+criterion = nn.SmoothL1Loss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
 
 model.to(device)
 
-epochs = 100
+epochs = 300
 
 # early stopping
 best_loss = float('inf')
-patience = 20
+patience = 40
 counter = 0
 
 # create dataloader for training data
@@ -122,7 +201,8 @@ for epoch in range(epochs):
     for X_batch, y_batch in train_loader:
         optimizer.zero_grad()
         outputs = model(X_batch)
-        loss = criterion(outputs, y_batch)
+        # loss = criterion(outputs, y_batch)
+        loss = quantile_loss(outputs, y_batch)
 
         loss.backward()
         optimizer.step()
@@ -131,7 +211,7 @@ for epoch in range(epochs):
     model.eval()
     with torch.no_grad():
         test_outputs = model(X_test)
-        test_loss = criterion(test_outputs, y_test)
+        test_loss = quantile_loss(test_outputs, y_test)
 
     if test_loss.item() < best_loss:
         best_loss = test_loss.item()
@@ -156,7 +236,7 @@ if best_model_state is not None:
 model.eval()
 with torch.no_grad():
     test_outputs = model(X_test)
-    test_loss = criterion(test_outputs, y_test)
+    test_loss = quantile_loss(test_outputs, y_test)
     print(f"Test Loss: {test_loss.item():.4f}")
 
 # inverse transform predictions and actual values to get back to original scale
@@ -168,6 +248,9 @@ plt.plot(y_test_inv, label='Actual')
 plt.plot(test_outputs_inv, label='Predicted')
 plt.legend()
 plt.show()
+
+print(f"Std of predictions: {test_outputs.std().item():.4f}")
+print(f"Std of actuals: {y_test.std().item():.4f}")
 
 # Calculate actual returns (buy and hold)
 actual_returns = np.diff(y_test_inv.squeeze()) / y_test_inv.squeeze()[:-1]
@@ -204,33 +287,35 @@ plt.show()
 
 # Difference between predicted and previous day's actual close
 pred_diff = predicted_next - current
+actual_diff = y_test_inv.squeeze()[1:] - current
 plt.plot(pred_diff, label='Prediction - Previous Close')
+plt.plot(actual_diff, label='Actual - Previous Close')
 plt.title("Difference Between Prediction and Previous Day's Close")
 plt.legend()
 plt.show()
 
-# Recursive forecast for the test set
-recursive_preds = []
-seq = X_test[0].cpu().numpy()
+# # Recursive forecast for the test set
+# recursive_preds = []
+# seq = X_test[0].cpu().numpy()
 
-for i in range(len(X_test)):
-    # Predict next close
-    seq_tensor = torch.tensor(seq.reshape(1, sequence_length, len(features)), dtype=torch.float32).to(device)
-    with torch.no_grad():
-        pred = model(seq_tensor).cpu().numpy()
-    pred_inv = y_scaler.inverse_transform(pred)[0, 0]
-    recursive_preds.append(pred_inv)
+# for i in range(len(X_test)):
+#     # Predict next close
+#     seq_tensor = torch.tensor(seq.reshape(1, sequence_length, len(features)), dtype=torch.float32).to(device)
+#     with torch.no_grad():
+#         pred = model(seq_tensor).cpu().numpy()
+#     pred_inv = y_scaler.inverse_transform(pred)[0, 0]
+#     recursive_preds.append(pred_inv)
     
-    # Prepare next sequence: drop oldest, add new prediction as 'Close'
-    if i < len(X_test) - 1:
-        next_seq = seq[1:].copy()
-        next_row = np.zeros(len(features))
-        next_row[features.index('Close')] = x_scaler.transform([[pred_inv]])[0][0]
-        seq = np.vstack([next_seq, next_row])
+#     # Prepare next sequence: drop oldest, add new prediction as 'Close'
+#     if i < len(X_test) - 1:
+#         next_seq = seq[1:].copy()
+#         next_row = np.zeros(len(features))
+#         next_row[features.index('Close')] = x_scaler.transform([[pred_inv]])[0][0]
+#         seq = np.vstack([next_seq, next_row])
 
-# Plot recursive predictions vs actual
-plt.plot(y_test_inv.squeeze(), label='Actual')
-plt.plot(recursive_preds, label='Recursive Predictions')
-plt.legend()
-plt.title("Recursive Forecast vs Actual")
-plt.show()
+# # Plot recursive predictions vs actual
+# plt.plot(y_test_inv.squeeze(), label='Actual')
+# plt.plot(recursive_preds, label='Recursive Predictions')
+# plt.legend()
+# plt.title("Recursive Forecast vs Actual")
+# plt.show()
