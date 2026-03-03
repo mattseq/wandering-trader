@@ -13,7 +13,7 @@ ticker = "IBM"
 
 data = yf.download(ticker, start="2005-01-01", end="2025-01-01")
 vix = yf.download("^VIX", start="2005-01-01", end="2025-01-01")
-vix = vix.reindex(data.index).fillna(method='ffill')
+vix = vix.reindex(data.index).ffill()
 
 if (data.empty):
     print("No data found for ticker:", ticker)
@@ -69,7 +69,7 @@ train_data = data[:split_idx]
 test_data = data[split_idx:]
 
 # use the last 60 days of features as sequence input
-sequence_length = 60
+sequence_length = 30
 
 # features to use for prediction, output is next day's close price
 features = ['Close', 'High', 'Low', 'Volume', 'MA5', 'MA10', 'Return_1', 'Return_5', 'Return_10', 'HL_range', 'OC_diff', 'Volatility', 'Volume_Change', 'RSI', 'MACD', 'MACD_signal', 'BB_upper', 'BB_lower', 'ATR', 'VIX_Close', 'VIX_Return_1', 'VIX_Return_5', 'VIX_Return_10']
@@ -108,68 +108,27 @@ y_train = torch.tensor(y_train, dtype=torch.float32).to(device)
 y_test = torch.tensor(y_test, dtype=torch.float32).to(device)
 
 class LSTMModel(nn.Module):
-    def __init__(self, input_size, num_targets=1):
+    def __init__(self, input_size, hidden_size=64, num_targets=1):
         super(LSTMModel, self).__init__()
-        self.lstm1 = nn.LSTM(input_size=input_size, hidden_size=50, num_layers=1, batch_first=True)
-        self.lstm2 = nn.LSTM(input_size=50, hidden_size=50, num_layers=1, batch_first=True)
-        self.lstm3 = nn.LSTM(input_size=50, hidden_size=50, num_layers=1, batch_first=True)
-        
-        self.dropout1 = nn.Dropout(0.2)
-        self.dropout2 = nn.Dropout(0.2)
-        # self.dropout3 = nn.Dropout(0.2)
+        self.lstm1 = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=3, batch_first=True, dropout=0.2)
 
-        self.linear = nn.Linear(50, num_targets)
+        self.attention = nn.Linear(hidden_size, 1)
+
+        self.linear = nn.Linear(hidden_size, num_targets)
     def forward(self, x):
         # _ is the hidden state, not needed for prediction so just ignore it
         out, _ = self.lstm1(x)
-        out = self.dropout1(out)
 
-        out, _ = self.lstm2(out)
-        out = self.dropout2(out)
-
-        out, _ = self.lstm3(out)
-        # out = self.dropout3(out)
-
-        # lstm outputs sequence of preds with length seq_len, so just get the last output
-        out = out[:, -1, :]
+        # use self.attention layer to get weights for each time step, basically "attention" over the sequence output by the lstm
+        attn_weights = torch.softmax(self.attention(out), dim=1)
+        # weigth the initial lstm output by the attention weights and sum over the sequence dimension to get back to (batch_size, hidden_size)
+        out = torch.sum(out * attn_weights, dim=1)
 
         out = self.linear(out)
 
         return out
     
-# I AM GRUT
-class GRUModel(nn.Module):
-    def __init__(self, input_size, num_targets=1):
-        super(GRUModel, self).__init__()
-        
-        self.gru1 = nn.GRU(input_size=input_size, hidden_size=50, num_layers=1, batch_first=True)
-        self.gru2 = nn.GRU(input_size=50, hidden_size=50, num_layers=1, batch_first=True)
-        self.gru3 = nn.GRU(input_size=50, hidden_size=50, num_layers=1, batch_first=True)
-
-        self.dropout1 = nn.Dropout(0.2)
-        self.dropout2 = nn.Dropout(0.2)
-        # self.dropout3 = nn.Dropout(0.2)
-
-        self.linear = nn.Linear(50, num_targets)
-    def forward(self, x):
-        # _ is the hidden state, not needed for prediction so just ignore it
-        out, _ = self.gru1(x)
-        out = self.dropout1(out)
-
-        out, _ = self.gru2(out)
-        out = self.dropout2(out)
-
-        out, _ = self.gru3(out)
-        # out = self.dropout3(out)
-
-        # lstm outputs sequence of preds with length seq_len, so just get the last output
-        out = out[:, -1, :]
-
-        out = self.linear(out)
-
-        return out
-    
-def quantile_loss(y_pred, y_true, quantile=0.7):
+def quantile_loss(y_pred, y_true, quantile=0.5):
     error = y_true - y_pred
     return torch.mean(torch.max(quantile * error, (quantile - 1) * error))
 
@@ -177,6 +136,9 @@ model = LSTMModel(input_size=len(features))
 
 criterion = nn.SmoothL1Loss()
 optimizer = torch.optim.Adam(model.parameters(), lr=0.0001, weight_decay=1e-5)
+scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
+    optimizer, mode='min', patience=15, factor=0.5
+)
 
 model.to(device)
 
@@ -205,6 +167,7 @@ for epoch in range(epochs):
         loss = quantile_loss(outputs, y_batch)
 
         loss.backward()
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
         optimizer.step()
 
     # evaluate on test set
@@ -212,6 +175,8 @@ for epoch in range(epochs):
     with torch.no_grad():
         test_outputs = model(X_test)
         test_loss = quantile_loss(test_outputs, y_test)
+
+    scheduler.step(loss)
 
     if test_loss.item() < best_loss:
         best_loss = test_loss.item()
