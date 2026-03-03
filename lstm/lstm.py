@@ -194,7 +194,6 @@ def quantile_loss(y_pred, y_true):
 
 def train(model, X_train, y_train, X_test, y_test):
 
-    criterion = nn.SmoothL1Loss()
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
         optimizer, mode='min', patience=SCHEDULER_PATIENCE, factor=0.5
@@ -218,7 +217,6 @@ def train(model, X_train, y_train, X_test, y_test):
         for X_batch, y_batch in train_loader:
             optimizer.zero_grad()
             outputs = model(X_batch)
-            # loss = criterion(outputs, y_batch)
             loss = quantile_loss(outputs, y_batch)
 
             loss.backward()
@@ -231,7 +229,7 @@ def train(model, X_train, y_train, X_test, y_test):
             test_outputs = model(X_test)
             test_loss = quantile_loss(test_outputs, y_test)
 
-        scheduler.step(loss)
+        scheduler.step(test_loss)
 
         if test_loss.item() < best_loss:
             best_loss = test_loss.item()
@@ -267,6 +265,14 @@ def evaluate(model, X_test, y_test, y_scaler):
 
     return y_test_inv, test_outputs_inv
 
+def get_model_signals(preds_inv):
+    pred_next = preds_inv.squeeze()[1:]
+    pred_curr = preds_inv.squeeze()[:-1]
+
+    signal = pred_next > pred_curr
+
+    return signal
+
 def get_attention_weights(model, X_sample):
     model.eval()
     with torch.no_grad():
@@ -274,20 +280,17 @@ def get_attention_weights(model, X_sample):
         attn_weights = torch.softmax(model.attention(out), dim=1)
     return attn_weights.squeeze().cpu().numpy()
 
-def backtest(y_test_inv, preds_inv):
+def backtest(y_test_inv, preds):
     actual_returns = np.diff(y_test_inv.squeeze()) / y_test_inv.squeeze()[:-1]
     actual_cum = np.cumprod(1 + actual_returns) - 1
 
-    pred_next = preds_inv.squeeze()[1:]
-    pred_curr = preds_inv.squeeze()[:-1]
-
-    signal = pred_next > pred_curr
+    signal = get_model_signals(preds)
     model_returns = actual_returns * signal
     model_cum = np.cumprod(1 + model_returns) - 1
 
-    smart_signal = pred_next > (pred_curr * (1 + THRESHOLD))
-    smart_returns = actual_returns * smart_signal
-    smart_cum = np.cumprod(1 + smart_returns) - 1
+    # smart_signal = pred_next > (pred_curr * (1 + THRESHOLD))
+    # smart_returns = actual_returns * smart_signal
+    # smart_cum = np.cumprod(1 + smart_returns) - 1
 
     naive_signal = np.roll(actual_returns > 0, 1)
     naive_signal[0] = False
@@ -297,18 +300,17 @@ def backtest(y_test_inv, preds_inv):
     return {
         'actual': actual_cum,
         'model': model_cum,
-        'smart': smart_cum,
+        # 'smart': smart_cum,
         'naive': naive_cum,
         'actual_returns': actual_returns,
-        'pred_next': pred_next,
-        'pred_curr': pred_curr,
+        'model_signals': signal,
     }
 
 def sharpe_ratio(returns, annualize=252):
     return (returns.mean() / (returns.std() + 1e-8)) * np.sqrt(annualize)
 
 def print_metrics(results):
-    print(f"\nSharpe (Model):       {sharpe_ratio(results['actual_returns'] * (results['pred_next'] > results['pred_curr'])):.2f}")
+    print(f"\nSharpe (Model):       {sharpe_ratio(results['actual_returns'] * (results['model_signals'])):.2f}")
     print(f"Sharpe (Buy & Hold):  {sharpe_ratio(results['actual_returns']):.2f}")
     print(f"Total Return (Model): {results['model'][-1]:.2%}")
     print(f"Total Return (B&H):   {results['actual'][-1]:.2%}")
@@ -353,7 +355,7 @@ def plot_cumulative_returns(results, n_simulations=200):
     # other strategies
     plt.plot(results['actual'], color='black', linewidth=2, label='Buy and Hold')
     plt.plot(results['model'], color='blue', linewidth=2, label='Model Strategy')
-    plt.plot(results['smart'], color='green', linewidth=2, label='Smart Model Strategy')
+    # plt.plot(results['smart'], color='green', linewidth=2, label='Smart Model Strategy')
     plt.plot(results['naive'], color='orange', linewidth=2, label='Naive Momentum')
     
     plt.axhline(0, color='black', linewidth=0.5, linestyle=':')
@@ -402,7 +404,8 @@ def main():
     model = train(model, X_train, y_train, X_test, y_test)
     y_test_inv, test_outputs_inv = evaluate(model, X_test, y_test, y_scaler)
 
-    results = backtest(y_test_inv, test_outputs_inv)
+    actual_prices = test_data['Close'].values[SEQUENCE_LENGTH:]
+    results = backtest(actual_prices, test_outputs_inv)
 
     print_metrics(results)
 
