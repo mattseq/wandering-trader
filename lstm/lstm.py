@@ -15,17 +15,17 @@ TICKER = "IBM"
 START = "2005-01-01"
 END = "2025-01-01"
 
-SEQUENCE_LENGTH = 30
+SEQUENCE_LENGTH = 10
 TRAIN_SPLIT = 0.6
 
-HIDDEN_SIZE = 64
+HIDDEN_SIZE = 32
 NUM_LAYERS = 3
-DROPOUT = 0.2
-BATCH_SIZE = 32
+DROPOUT = 0.3
+BATCH_SIZE = 64
 
 EPOCHS = 300
 LR = 0.0001
-WEIGHT_DECAY = 1e-5
+WEIGHT_DECAY = 1e-3
 
 PATIENCE = 40
 
@@ -33,6 +33,7 @@ SCHEDULER_PATIENCE = 15
 SCHEDULER_FACTOR = 0.5
 
 QUANTILE = 0.5
+DIRECTIONAL_PENALTY_WEIGHT = 0.3
 THRESHOLD = 0.001
 
 FEATURES = [
@@ -120,6 +121,7 @@ def add_features(data, vix):
     # TODO: use log returns as target, or maybe just binary signal
     # dont forget the target var
     data['Target'] = data['Close'].shift(-1)
+    # data['Target'] = np.log(data['Return_1'] + 1).shift(-1)
     
     data.dropna(inplace=True)
     data.reset_index(inplace=True, drop=True)
@@ -170,7 +172,7 @@ def prepare_tensors(train_data, test_data, x_scaler, y_scaler):
 class LSTMModel(nn.Module):
     def __init__(self, input_size, hidden_size=64, num_targets=1):
         super(LSTMModel, self).__init__()
-        self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=3, batch_first=True, dropout=0.2)
+        self.lstm = nn.LSTM(input_size=input_size, hidden_size=hidden_size, num_layers=NUM_LAYERS, batch_first=True, dropout=DROPOUT)
 
         self.attention = nn.Linear(hidden_size, 1)
 
@@ -191,6 +193,14 @@ class LSTMModel(nn.Module):
 def quantile_loss(y_pred, y_true):
     error = y_true - y_pred
     return torch.mean(torch.max(QUANTILE * error, (QUANTILE - 1) * error))
+
+def directional_loss(y_pred, y_true):
+    mse = nn.MSELoss()(y_pred, y_true)
+    # Add penalty for wrong direction
+    pred_sign = torch.sign(y_pred)
+    true_sign = torch.sign(y_true)
+    direction_penalty = torch.mean((pred_sign != true_sign).float())
+    return mse + DIRECTIONAL_PENALTY_WEIGHT * direction_penalty
 
 def train(model, X_train, y_train, X_test, y_test):
 
@@ -217,7 +227,7 @@ def train(model, X_train, y_train, X_test, y_test):
         for X_batch, y_batch in train_loader:
             optimizer.zero_grad()
             outputs = model(X_batch)
-            loss = quantile_loss(outputs, y_batch)
+            loss = directional_loss(outputs, y_batch)
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
@@ -227,7 +237,7 @@ def train(model, X_train, y_train, X_test, y_test):
         model.eval()
         with torch.no_grad():
             test_outputs = model(X_test)
-            test_loss = quantile_loss(test_outputs, y_test)
+            test_loss = directional_loss(test_outputs, y_test)
 
         scheduler.step(test_loss)
 
@@ -256,7 +266,7 @@ def evaluate(model, X_test, y_test, y_scaler):
     model.eval()
     with torch.no_grad():
         test_outputs = model(X_test)
-        test_loss = quantile_loss(test_outputs, y_test)
+        test_loss = directional_loss(test_outputs, y_test)
         print(f"Test Loss: {test_loss.item():.4f}")
 
     # inverse transform predictions and actual values to get back to original scale
@@ -265,11 +275,13 @@ def evaluate(model, X_test, y_test, y_scaler):
 
     return y_test_inv, test_outputs_inv
 
-def get_model_signals(preds_inv):
+def get_model_signals(actual, preds_inv):
     pred_next = preds_inv.squeeze()[1:]
-    pred_curr = preds_inv.squeeze()[:-1]
+    actual_curr = actual.squeeze()[:-1]
 
-    signal = pred_next > pred_curr
+    signal = pred_next > actual_curr
+
+    # signal = (preds_inv.squeeze() > 0)[:-1]
 
     return signal
 
@@ -280,11 +292,11 @@ def get_attention_weights(model, X_sample):
         attn_weights = torch.softmax(model.attention(out), dim=1)
     return attn_weights.squeeze().cpu().numpy()
 
-def backtest(y_test_inv, preds):
-    actual_returns = np.diff(y_test_inv.squeeze()) / y_test_inv.squeeze()[:-1]
+def backtest(actual_prices, preds):
+    actual_returns = np.diff(actual_prices.squeeze()) / actual_prices.squeeze()[:-1]
     actual_cum = np.cumprod(1 + actual_returns) - 1
 
-    signal = get_model_signals(preds)
+    signal = get_model_signals(actual_prices, preds)
     model_returns = actual_returns * signal
     model_cum = np.cumprod(1 + model_returns) - 1
 
@@ -305,6 +317,27 @@ def backtest(y_test_inv, preds):
         'actual_returns': actual_returns,
         'model_signals': signal,
     }
+
+def analyze_predictions(y_test_inv, preds_inv):
+    
+    actual_prices = y_test_inv.squeeze()
+    predicted_prices = preds_inv.squeeze()
+    
+    # calculate returns from prices
+    actual_returns = np.diff(actual_prices) / actual_prices[:-1]
+    pred_returns = np.diff(predicted_prices) / predicted_prices[:-1]
+    
+    # correlation between actual and predicted returns
+    correlation = np.corrcoef(actual_returns, pred_returns)[0,1]
+    print(f"Return Prediction Correlation: {correlation:.4f}")
+    
+    # directional accuracy of returns
+    actual_direction = (actual_returns > 0).astype(int)
+    pred_direction = (pred_returns > 0).astype(int)
+    directional_accuracy = np.mean(actual_direction == pred_direction)
+    print(f"Directional Accuracy: {directional_accuracy:.2%}")
+    
+    return correlation, directional_accuracy
 
 def sharpe_ratio(returns, annualize=252):
     return (returns.mean() / (returns.std() + 1e-8)) * np.sqrt(annualize)
@@ -413,6 +446,8 @@ def main():
     plot_predictions(y_test_inv, test_outputs_inv)
     plot_cumulative_returns(results)
     plot_attention(model, X_test)
+
+    analyze_predictions(y_test_inv, test_outputs_inv)
 
 if __name__ == "__main__":
     main()
