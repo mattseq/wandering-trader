@@ -33,7 +33,7 @@ SCHEDULER_PATIENCE = 15
 SCHEDULER_FACTOR = 0.5
 
 QUANTILE = 0.5
-DIRECTIONAL_PENALTY_WEIGHT = 0.3
+DIRECTIONAL_PENALTY = 0.2
 THRESHOLD = 0.001
 
 FEATURES = [
@@ -200,7 +200,7 @@ def directional_loss(y_pred, y_true):
     pred_sign = torch.sign(y_pred)
     true_sign = torch.sign(y_true)
     direction_penalty = torch.mean((pred_sign != true_sign).float())
-    return mse + DIRECTIONAL_PENALTY_WEIGHT * direction_penalty
+    return mse + DIRECTIONAL_PENALTY * direction_penalty
 
 def train(model, X_train, y_train, X_test, y_test):
 
