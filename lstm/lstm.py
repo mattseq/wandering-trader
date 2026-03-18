@@ -5,15 +5,17 @@ import matplotlib.pyplot as plt
 import pandas as pd
 import yfinance as yf
 from sklearn.preprocessing import MinMaxScaler, StandardScaler
+from datetime import datetime
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print(f"Using device: {device}")
 
 # TODO: consider using a single config var for all these settings so its easier to pass into functions
 
+END = datetime.now().strftime("%Y-%m-%d");
+START = (datetime.now() - pd.DateOffset(days=59)).strftime("%Y-%m-%d")
+
 TICKER = input("Enter ticker symbol (i.e. IBM): ")
-START = "2026-02-01"
-END = "2026-03-01"
 INTERVAL = "5m"
 
 SEQUENCE_LENGTH = 30
