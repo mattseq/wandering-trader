@@ -21,7 +21,7 @@ TRAIN_SPLIT = 0.6
 
 HIDDEN_SIZE = 128
 NUM_LAYERS = 3
-DROPOUT = 0.3
+DROPOUT = 0.4
 BATCH_SIZE = 64
 
 EPOCHS = 300
@@ -132,8 +132,8 @@ def add_features(data, vix):
 
 def split_and_scale(data):
     split_idx = int(TRAIN_SPLIT * len(data))
-    train_data = data[:split_idx]
-    test_data = data[split_idx:]
+    train_data = data[:split_idx].copy()
+    test_data = data[split_idx:].copy()
 
     x_scaler = MinMaxScaler()
     x_scaler.fit(train_data[FEATURES])
@@ -198,7 +198,7 @@ def quantile_loss(y_pred, y_true):
 
 def directional_loss(y_pred, y_true):
     mse = nn.MSELoss()(y_pred, y_true)
-    # Add penalty for wrong direction
+    # add penalty for wrong direction
     pred_sign = torch.sign(y_pred)
     true_sign = torch.sign(y_true)
     direction_penalty = torch.mean((pred_sign != true_sign).float())
@@ -213,7 +213,6 @@ def train(model, X_train, y_train, X_test, y_test):
 
     # early stopping
     best_loss = float('inf')
-    patience = 40
     counter = 0
 
     # create dataloader for training data
@@ -226,36 +225,36 @@ def train(model, X_train, y_train, X_test, y_test):
     for epoch in range(EPOCHS):
         # main training loop
         model.train()
+        epoch_loss_sum = 0.0
+        num_batches = 0
         for X_batch, y_batch in train_loader:
             optimizer.zero_grad()
             outputs = model(X_batch)
             loss = directional_loss(outputs, y_batch)
+            epoch_loss_sum += loss.item()
+            num_batches += 1
 
             loss.backward()
             torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
             optimizer.step()
 
-        # evaluate on test set
-        model.eval()
-        with torch.no_grad():
-            test_outputs = model(X_test)
-            test_loss = directional_loss(test_outputs, y_test)
+        epoch_train_loss = epoch_loss_sum / max(1, num_batches)
 
-        scheduler.step(test_loss)
+        scheduler.step(epoch_train_loss)
 
-        if test_loss.item() < best_loss:
-            best_loss = test_loss.item()
+        if epoch_train_loss < best_loss:
+            best_loss = epoch_train_loss
             counter = 0
             best_model_state = model.state_dict()
         else:
             counter += 1
 
-        # print training and test loss
+        # print training loss
         if epoch % 10 == 0:
-            print(f"Epoch [{epoch + 1}/{EPOCHS}], Training Loss: {loss.item():.4f}, Test Loss: {test_loss.item():.4f}")
+            print(f"Epoch [{epoch + 1}/{EPOCHS}], Training Loss: {epoch_train_loss:.4f}")
 
         # check for early stopping
-        if counter >= patience:
+        if counter >= PATIENCE:
             print("Early stopping triggered.")
             break
 
