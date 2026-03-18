@@ -15,6 +15,7 @@ Gradient boosting models are also included.
 - `random_forest/random_forest.py` - Random Forest classifier and strategy evaluation
 - `gradient_boosting/gboost.py` - Gradient Boosting classifier experiments
 - `gradient_boosting/xgboost_model.py` - XGBoost classifier experiments
+- Some graph images from recent runs are included in the `lstm` and `random_forest` folders, but running the scripts yourself will generate additional plots beyond the ones shown in this repository
 
 ## What This Project Does
 
@@ -28,7 +29,11 @@ Gradient boosting models are also included.
 
 ## 1) LSTM + Attention (Main Model)
 
-The LSTM workflow is in `lstm/lstm.py`.
+<img src="lstm/lstm.png" alt="LSTM Result" width="900" />
+
+The LSTM program appears to be the most successful.
+
+It's located at `lstm/lstm.py`.
 
 What it does:
 
@@ -62,9 +67,11 @@ Practical highlights:
   - Cumulative returns and random-signal benchmark bands
   - Attention weights across sequence positions
 
-## 2) Random Forest (Primary Tree Model)
+## 2) Random Forest (Secondary Model)
 
-Main script is `random_forest/random_forest.py`.
+<img src="random_forest/random_forest.png" alt="RF result" width="900" />
+
+Script is `random_forest/random_forest.py`.
 
 What it does:
 
