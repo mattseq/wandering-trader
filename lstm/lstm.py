@@ -11,14 +11,15 @@ print(f"Using device: {device}")
 
 # TODO: consider using a single config var for all these settings so its easier to pass into functions
 
-TICKER = "IBM"
-START = "2005-01-01"
-END = "2025-01-01"
+TICKER = input("Enter ticker symbol (i.e. IBM): ")
+START = "2026-02-01"
+END = "2026-03-01"
+INTERVAL = "5m"
 
-SEQUENCE_LENGTH = 10
+SEQUENCE_LENGTH = 30
 TRAIN_SPLIT = 0.6
 
-HIDDEN_SIZE = 32
+HIDDEN_SIZE = 128
 NUM_LAYERS = 3
 DROPOUT = 0.3
 BATCH_SIZE = 64
@@ -33,8 +34,7 @@ SCHEDULER_PATIENCE = 15
 SCHEDULER_FACTOR = 0.5
 
 QUANTILE = 0.5
-DIRECTIONAL_PENALTY = 0.2
-THRESHOLD = 0.001
+DIRECTIONAL_PENALTY = 1.0
 
 FEATURES = [
     'Close',
@@ -70,8 +70,9 @@ FEATURES = [
 ]
 
 def download_data():
-    data = yf.download(TICKER, start=START, end=END)
-    vix = yf.download("^VIX", start=START, end=END)
+    data = yf.download(TICKER, start=START, end=END, interval=INTERVAL)
+    vix = yf.download("^VIX", start=START, end=END, interval=INTERVAL)
+    
     vix = vix.reindex(data.index).ffill()
     if data.empty:
         print("No data found for ticker:", TICKER)
@@ -121,9 +122,10 @@ def add_features(data, vix):
     # TODO: use log returns as target, or maybe just binary signal
     # dont forget the target var
     data['Target'] = data['Close'].shift(-1)
-    # data['Target'] = np.log(data['Return_1'] + 1).shift(-1)
     
-    data.dropna(inplace=True)
+    data.replace([np.inf, -np.inf], 0.0, inplace=True)
+    data.fillna(0.0, inplace=True)
+    
     data.reset_index(inplace=True, drop=True)
 
     return data
@@ -206,7 +208,7 @@ def train(model, X_train, y_train, X_test, y_test):
 
     optimizer = torch.optim.Adam(model.parameters(), lr=LR, weight_decay=WEIGHT_DECAY)
     scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
-        optimizer, mode='min', patience=SCHEDULER_PATIENCE, factor=0.5
+        optimizer, mode='min', patience=SCHEDULER_PATIENCE, factor=SCHEDULER_FACTOR
     )
 
     # early stopping
@@ -309,10 +311,14 @@ def backtest(actual_prices, preds):
     naive_returns = actual_returns * naive_signal
     naive_cum = np.cumprod(1 + naive_returns) - 1
 
+    agree_signal = signal & naive_signal
+    agree_returns = actual_returns * agree_signal
+    agree_cum = np.cumprod(1 + agree_returns) - 1
+
     return {
         'actual': actual_cum,
         'model': model_cum,
-        # 'smart': smart_cum,
+        'smart': agree_cum,
         'naive': naive_cum,
         'actual_returns': actual_returns,
         'model_signals': signal,
@@ -347,6 +353,9 @@ def print_metrics(results):
     print(f"Sharpe (Buy & Hold):  {sharpe_ratio(results['actual_returns']):.2f}")
     print(f"Total Return (Model): {results['model'][-1]:.2%}")
     print(f"Total Return (B&H):   {results['actual'][-1]:.2%}")
+    print(f"Total Return (Naive):  {results['naive'][-1]:.2%}")
+    print(f"Total Return (Smart):  {results['smart'][-1]:.2%}")
+    print(f"Pct Days Invested:    {np.mean(results['model_signals']):.2%}")
 
 def plot_predictions(y_test_inv, preds_inv):
     plt.figure()
@@ -388,7 +397,7 @@ def plot_cumulative_returns(results, n_simulations=200):
     # other strategies
     plt.plot(results['actual'], color='black', linewidth=2, label='Buy and Hold')
     plt.plot(results['model'], color='blue', linewidth=2, label='Model Strategy')
-    # plt.plot(results['smart'], color='green', linewidth=2, label='Smart Model Strategy')
+    plt.plot(results['smart'], color='green', linewidth=2, label='Smart Model Strategy')
     plt.plot(results['naive'], color='orange', linewidth=2, label='Naive Momentum')
     
     plt.axhline(0, color='black', linewidth=0.5, linestyle=':')
@@ -441,7 +450,6 @@ def main():
     results = backtest(actual_prices, test_outputs_inv)
 
     print_metrics(results)
-
 
     plot_predictions(y_test_inv, test_outputs_inv)
     plot_cumulative_returns(results)
