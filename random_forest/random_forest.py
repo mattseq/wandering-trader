@@ -9,10 +9,15 @@ import matplotlib.pyplot as plt
 
 print(pd.__version__)
 
-ticker = "IBM"
+ticker = input("Enter ticker symbol: ")
 
-data = yf.download(ticker, start="2015-01-01", end="2025-01-01")
-vix = yf.download("^VIX", start="2015-01-01", end="2025-01-01")
+START = "2015-01-01"
+END = "2025-01-01"
+
+print(f"Fetching data for {ticker} from {START} to {END}...")
+
+data = yf.download(ticker, start=START, end=END)
+vix = yf.download("^VIX", start=START, end=END)
 vix = vix.reindex(data.index).fillna(method='ffill')
 
 print(data.head())
@@ -41,9 +46,8 @@ data['vol_20'] = data['ret_10'].rolling(20).std()
 data['vol_30'] = data['ret_20'].rolling(30).std()
 
 data['volume_10'] = data['Volume'].rolling(10).mean()
-data['volume_10'] = data['Volume'].rolling(10).mean()
-data['volume_10'] = data['Volume'].rolling(20).mean()
-data['volume_10'] = data['Volume'].rolling(30).mean()
+data['volume_20'] = data['Volume'].rolling(20).mean()
+data['volume_30'] = data['Volume'].rolling(30).mean()
 
 data['vix_close'] = vix['Close'].values
 data['vix_ret_1'] = data['vix_close'].pct_change(1)
@@ -59,7 +63,7 @@ data['target'] = (data['weekly_return'] > 0).astype(int)
 print(data.head())
 
 # inputs and labels
-features = ['ret_1', 'ret_5', 'ret_10', 'ret_20', 'ret_30', 'ma_10', 'ma_20', 'ma_30', 'ma_diff_10', 'ma_diff_20', 'ma_diff_30', 'vol_10', 'vol_20', 'vol_30', 'vix_close', 'vix_ret_1', 'vix_ret_5', 'vix_ret_10']
+features = ['ret_1', 'ret_5', 'ret_10', 'ret_20', 'ret_30', 'ma_10', 'ma_20', 'ma_30', 'ma_diff_10', 'ma_diff_20', 'ma_diff_30', 'vol_10', 'vol_20', 'vol_30', 'volume_10', 'volume_20', 'volume_30', 'vix_close', 'vix_ret_1', 'vix_ret_5', 'vix_ret_10']
 X = data[features].values
 y = data['target'].values.reshape(-1, 1)
 

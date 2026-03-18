@@ -1,1 +1,8 @@
-yfinance pandas numpy torch scikit-learn matplotlib seaborn xgboost
+yfinance
+pandas
+numpy
+torch
+scikit-learn
+matplotlib
+xgboost
+datetime

@@ -15,7 +15,7 @@ print(f"Using device: {device}")
 END = datetime.now().strftime("%Y-%m-%d");
 START = (datetime.now() - pd.DateOffset(days=59)).strftime("%Y-%m-%d")
 
-TICKER = input("Enter ticker symbol (i.e. IBM): ")
+TICKER = input("Enter ticker symbol (i.e. IBM, TSLA, GE): ")
 INTERVAL = "5m"
 
 SEQUENCE_LENGTH = 30
