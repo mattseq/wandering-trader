@@ -432,6 +432,11 @@ def plot_attention(model, X_test, n_samples=200):
 
 
 def main():
+    print("---------------------------------------------------------------")
+    print("Stock prediction with LSTM and Attention")
+    print(f"Ticker: {TICKER}, Period: {START} to {END}, Interval: {INTERVAL}")
+    print("---------------------------------------------------------------")
+
     # get data and add features
     raw_data, vix_data = download_data()
     data = add_features(raw_data, vix_data)
