@@ -9,7 +9,7 @@ import matplotlib.pyplot as plt
 
 print(pd.__version__)
 
-ticker = input("Enter ticker symbol: ")
+ticker = input("Enter ticker symbol (data must be available for 2015-2025): ")
 
 START = "2015-01-01"
 END = "2025-01-01"
@@ -222,8 +222,8 @@ plt.title('Model vs Buy and Hold Weekly Returns on ' + ticker)
 plt.legend()
 
 plt.tight_layout()
+plt.savefig(f"RF_{ticker}_model_vs_buy_and_hold.png")
 plt.show()
-
 
 window = 252
 model_returns_series = pd.Series(model_returns)
@@ -239,7 +239,11 @@ plt.xlabel('Weeks')
 plt.ylabel(f'Rolling Mean Return ({window} weeks)')
 plt.title('Rolling Mean of Weekly Returns')
 plt.legend()
+plt.savefig(f"RF_{ticker}_rolling_mean_returns.png")
 plt.show()
+
+print("Graphs saved to working directory.")
+input("Press Enter to exit...")
 
 ### Look into random forest, gradient boosting, lstm, transformer models.
 ### more features like technical indicators, sentiment analysis, macroeconomic data, etc.

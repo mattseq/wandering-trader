@@ -364,8 +364,10 @@ def plot_predictions(y_test_inv, preds_inv):
     plt.plot(preds_inv, label='Predicted')
     plt.legend()
     plt.title("Actual vs Predicted Close Price")
+    plt.savefig(f"LSTM_{TICKER}_predictions.png")
     plt.show()
-
+    plt.close()
+    
 def random_signal_returns(actual_returns, n_simulations=200, seed=42):
     # generate random buy/sell signals and calculate cumulative returns for each simulation
     rng = np.random.default_rng(seed)
@@ -390,6 +392,8 @@ def plot_cumulative_returns(results, n_simulations=200):
     p75 = np.percentile(sims, 75, axis=0)
     p90 = np.percentile(sims, 90, axis=0)
 
+    plt.figure()
+
     # percentile bands
     plt.fill_between(range(len(p10)), p10, p90, alpha=0.15, color='gray', label='Random 10th-90th Percentile')
     plt.fill_between(range(len(p25)), p25, p75, alpha=0.25, color='gray', label='Random 25th-75th Percentile')
@@ -406,8 +410,9 @@ def plot_cumulative_returns(results, n_simulations=200):
     plt.title(f"Strategy Returns — {TICKER}")
     plt.ylabel("Cumulative Return")
     plt.xlabel("Trading Days")
-    plt.tight_layout()
+    plt.savefig(f"LSTM_{TICKER}_cumulative_returns.png")
     plt.show()
+    plt.close()
 
     # print where model stands in random distribution
     model_final = results['model'][-1]
@@ -430,8 +435,9 @@ def plot_attention(model, X_test, n_samples=200):
     plt.xlabel("Timestep in Sequence")
     plt.ylabel("Mean Attention Weight")
     plt.title("Average Attention Weights Across 200 Test Samples")
+    plt.savefig(f"LSTM_{TICKER}_attention_weights.png")
     plt.show()
-
+    plt.close()
 
 def main():
     print("---------------------------------------------------------------")
@@ -462,6 +468,9 @@ def main():
     plot_attention(model, X_test)
 
     analyze_predictions(y_test_inv, test_outputs_inv)
+
+    print("Graphs saved to working directory.")
+    input("Press Enter to exit...")
 
 if __name__ == "__main__":
     main()
