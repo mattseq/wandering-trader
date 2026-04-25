@@ -151,8 +151,3 @@ Prebuilt Windows executables will be published in GitHub Releases for:
 
 - LSTM
 - Random Forest
-
-## Current Focus and Status
-
-- Most mature and actively worked areas: **LSTM** and **Random Forest**
-- Gradient boosting scripts are experimental

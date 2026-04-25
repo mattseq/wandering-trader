@@ -117,8 +117,8 @@ for end in range(train_window, len(X) - test_window, test_window):
     
     # retrain the model on the new training data
     model = RandomForestClassifier(
-        n_estimators=200,
-        max_depth=15,
+        n_estimators=170,
+        max_depth=10,
         min_samples_split=5,
         min_samples_leaf=2,
         max_features="sqrt",
@@ -137,6 +137,9 @@ for end in range(train_window, len(X) - test_window, test_window):
     buy_and_hold_returns.append(data['weekly_return'].values[end])
 
     test_indices.append(end)
+
+    if (end - train_window) % (10 * test_window) == 0:
+        print(f"Processed window ending at index {end}, Accuracy so far: {accuracy_score(actuals, predictions):.4f}")
 
 predictions = np.array(predictions)
 actuals = np.array(actuals)
@@ -203,6 +206,8 @@ plt.title('Stock Price with Correct/Incorrect Predictions')
 plt.legend()
 
 plt.tight_layout()
+plt.savefig(f"RF_{ticker}_cumulative_returns.png")
+plt.show()
 
 plt.figure()
 plt.subplot(2, 1, 1)
@@ -222,7 +227,6 @@ plt.title('Model vs Buy and Hold Weekly Returns on ' + ticker)
 plt.legend()
 
 plt.tight_layout()
-plt.savefig(f"RF_{ticker}_model_vs_buy_and_hold.png")
 plt.show()
 
 window = 252
